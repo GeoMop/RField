@@ -1,7 +1,7 @@
 from scipy.stats.qmc import PoissonDisk
 import numpy as np
 
-def generate_anchor_points(count_points, min_distance, area_size):
+def generate_points(count_points, min_distance, area_size):
     """
     Funkce vygeneruje pole nahodnych bodu.
     
