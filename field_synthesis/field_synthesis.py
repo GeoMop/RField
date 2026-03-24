@@ -122,7 +122,7 @@ class FieldSynthesis():
             elif len(neighbors) == 1:
                 mixed_results.append(self.field_indices[neighbors[0]])
             else:
-                # 4: Provedeme průměr, pokud jich zbyde více
+                # "Provedeme průměr, pokud jich zbyde více
                 values = self.field_indices[neighbors]
                 mixed_results.append(np.mean(values))
                 
