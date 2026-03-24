@@ -105,7 +105,7 @@ def multiscale_analysis(x, y, q_a_vals, q_b_vals):
         p_values_all['arith'].append(np.nanmean(p_map_arith))
         p_values_all['geom'].append(np.nanmean(p_map_geom))
         p_values_all['harm'].append(np.nanmean(p_map_harm))
-        
+
         im_a = axes1[idx, 0].imshow(p_map_arith, origin='lower', extent=[0, 1, 0, 1], cmap='RdYlGn', vmin=0, vmax=1)
         axes1[idx, 0].set_ylabel(f"Mřížka {gs}x{gs}")
         if idx == 0: axes1[idx, 0].set_title("Aritmetický")
