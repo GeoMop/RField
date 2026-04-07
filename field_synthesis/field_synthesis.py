@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import numpy as np
 import math
 from scipy.stats.qmc import PoissonDisk
@@ -5,15 +6,13 @@ from scipy.spatial import cKDTree
 from functools import cached_property
 
 
+@dataclass(frozen=True)
 class FieldSynthesis():
     """
     Třída pro syntézu prostorových polí pomocí generování kotevních bodů 
     a jejich následného míchání.
     """
-
-
-    def __init__(self, area_size: float, count_points: int, num_source: int, dimension: int = 2, seed: int = 42):
-        """
+    """
         Inicializuje parametry syntézy pole.
 
         Args:
@@ -22,18 +21,22 @@ class FieldSynthesis():
             num_source (int): Počet dostupných zdrojů (typů polí).
             dimension (int): Dimenze prostoru (2D, 3D).
             seed (int): Seed pro generátor náhodných čísel.
-        """
+    """
 
-        self.area_size = area_size
-        self.count_points = count_points
-        self.num_source = num_source
-        self.dimension = dimension
-        self.seed = seed
-        self.rng = np.random.default_rng(seed)
+    area_size: int
+    count_points: int
+    num_source: int
+    dimension: int = 2
+    free_space_ratio: float = 0.4
+    seed: int = 42 
 
         # self.min_distance = self.calc_distance()
         # self.anchor_points = None
         # self.field_indices = None
+
+    @cached_property
+    def rng(self) -> np.random.Generator:
+        return np.random.default_rng(self.seed)
 
     @cached_property
     def min_distance(self) -> float:
@@ -44,9 +47,8 @@ class FieldSynthesis():
         if self.count_points <= 0 or self.area_size <= 0:
             return 0.0
         
-        free_space_ratio = 0.4
         total_vol = self.area_size ** self.dimension
-        occupied_ratio = 1.0 - free_space_ratio
+        occupied_ratio = 1.0 - self.free_space_ratio
         vol_per_point = (total_vol * occupied_ratio) / self.count_points
         
         if self.dimension == 2:
@@ -76,7 +78,7 @@ class FieldSynthesis():
         if radius > 1:
             radius = 0.99
         try:
-            engine = PoissonDisk(d=2, radius=radius, seed=42)
+            engine = PoissonDisk(d=self.dimension, radius=radius, seed=42)
 
             #ten algorytm je nakladny na cas a resurs pocitace
             # points = engine.fill_space() * area_size
