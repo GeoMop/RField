@@ -1,9 +1,10 @@
 import argparse
 import zipfile
 import io
-import os
 import numpy as np
 from field_synthesis import FieldSynthesis
+
+
 
 def load_data(zip_path):
     """Extrahuje souřadnice a všechny vzorky z jednoho ZIP archivu."""
