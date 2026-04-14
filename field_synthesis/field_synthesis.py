@@ -7,32 +7,36 @@ from functools import cached_property
 
 
 @dataclass(frozen=True)
-class FieldSynthesis():
+class FieldSynthesis:
+
     """
     Třída pro syntézu prostorových polí pomocí generování kotevních bodů 
     a jejich následného míchání.
-    """
-    """
-        Inicializuje parametry syntézy pole.
-
-        Args:
-            area_size (float): Délka strany pracovní oblasti.
-            count_points (int): Požadovaný počet bodů k vygenerování.
-            num_source (int): Počet dostupných zdrojů (typů polí).
-            dimension (int): Dimenze prostoru (2D, 3D).
-            seed (int): Seed pro generátor náhodných čísel.
+    *
     """
 
-    area_size: int
-    count_points: int
-    num_source: int
-    dimension: int = 2
-    free_space_ratio: float = 0.4
-    seed: int = 42 
+    point_coords: np.ndarray  # Shape (K, dimension)
+    count_points: int = 100    # Počet kotevních bodů (anchor points)
+    safety_factor: float = 1.5 # Pro výpočet min_distance
+    seed: int = 42
 
-        # self.min_distance = self.calc_distance()
-        # self.anchor_points = None
-        # self.field_indices = None
+    @property
+    def dimension(self) -> int:
+        return self.point_coords.shape[1]
+
+    @cached_property
+    def area_stats(self) -> dict:
+        """Vypočítá bounding box a objem pracovní oblasti."""
+        min_bounds = np.min(self.point_coords, axis=0)
+        max_bounds = np.max(self.point_coords, axis=0)
+        sides = max_bounds - min_bounds
+        volume = np.prod(sides)
+        return {
+            "min": min_bounds,
+            "max": max_bounds,
+            "volume": volume,
+            "sides": sides
+        }
 
     @cached_property
     def rng(self) -> np.random.Generator:
@@ -41,113 +45,99 @@ class FieldSynthesis():
     @cached_property
     def min_distance(self) -> float:
         """
-        Odhad distance D pro zadaný počet bodů a stranu krychle.
-        D se odhaduje na základě poměru volného prostoru a obsazeného prostoru.
+        Výpočet minimální vzdálenosti na základě objemu a počtu bodů.
+        D = (Vol / N)^(1/dim) / safety_factor
         """
-        if self.count_points <= 0 or self.area_size <= 0:
+        vol = self.area_stats["volume"]
+        if self.count_points <= 0 or vol <= 0:
             return 0.0
         
-        total_vol = self.area_size ** self.dimension
-        occupied_ratio = 1.0 - self.free_space_ratio
-        vol_per_point = (total_vol * occupied_ratio) / self.count_points
-        
-        if self.dimension == 2:
-            return math.sqrt(vol_per_point)
-        else:
-            return vol_per_point ** (1/self.dimension)  
-        
+        vol_per_point = vol / self.count_points
+        return (vol_per_point ** (1 / self.dimension)) / self.safety_factor
 
     @cached_property
     def anchor_points(self) -> np.ndarray:
-        """
-        Funkce vygeneruje pole nahodnych bodu.
-        
-        :param count_points: pocet nahodnych bodu.
-        :param min_distance: minimalni vzdalenost mezi bodami.
-        :param area_size: velokost matici.
-        :return: vrati pole koordinat [[x1, y1], [x2, y2], ...]
-        """
-        if self.count_points <= 0 or self.area_size <= 0:
-            return np.zeros((0, 2))
-        
-        if self.min_distance < 0:
-            self.min_distance = 0
-        
-        radius = self.min_distance/self.area_size
+        """Generuje kotevní body pomocí Poisson Disk Sampling v rámci bounding boxu."""
+        if self.count_points <= 0:
+            return np.zeros((0, self.dimension))
 
-        if radius > 1:
-            radius = 0.99
+        # Normalizovaný rádius pro PoissonDisk (v jednotkách [0, 1])
+        # Používáme průměrnou stranu pro normalizaci
+        avg_side = np.mean(self.area_stats["sides"])
+        radius = self.min_distance / avg_side if avg_side > 0 else 0.1
+        radius = min(max(radius, 0.01), 0.99)
+
         try:
-            engine = PoissonDisk(d=self.dimension, radius=radius, seed=42)
-
-            #ten algorytm je nakladny na cas a resurs pocitace
-            # points = engine.fill_space() * area_size
-
-            # if (len(points) > count_points):
-            #     return points[:count_points]
-
-            return engine.random(self.count_points) * self.area_size
+            engine = PoissonDisk(d=self.dimension, radius=radius, seed=self.seed)
+            # Vygenerujeme body a roztáhneme je na rozměry bounding boxu
+            points = engine.random(self.count_points)
+            return self.area_stats["min"] + points * self.area_stats["sides"]
         except Exception:
-            return np.zeros((0, 2))
+            # Fallback na čistě náhodné body v případě chyby engine
+            return self.rng.uniform(
+                self.area_stats["min"], 
+                self.area_stats["max"], 
+                (self.count_points, self.dimension)
+            )
+
+    def get_fields_indices(self, num_source: int) -> np.ndarray:
+        """Přiřadí každému kotevnímu bodu index jednoho ze zdrojových polí."""
+        return self.rng.integers(0, num_source, size=len(self.anchor_points))
 
     @cached_property
-    def fields_indices(self) -> np.ndarray:
+    def neighbor_data(self):
         """
-        Každému bodu přiřadíme náhodně jedno ze zdrojových N polí.
+        Předvypočítá sousedy pro všechny target_points (point_coords).
+        Vrací seznam indexů kotevních bodů pro každý bod v point_coords.
         """
-        if self.anchor_points is None or len(self.anchor_points) == 0:
-            return np.array([], dtype=int)
-        
-        return self.rng.integers(0, self.num_source, size=len(self.anchor_points))
-    
+        if len(self.anchor_points) == 0:
+            return [np.array([], dtype=int)] * len(self.point_coords)
 
-    def spatial_points(self, target_points, k_neighbors=5) -> list:
-        """
-        Vektorizované vyhledání sousedů pomocí cKDTree.
-        Pro každý cílový bod získáme k nejbližších kotevních bodů a jejich vzdálenosti.
-        Poté aplikujeme vektorizovanou masku pro filtrování sousedů, kteří jsou dále než 2 * D.
-        Args:
-            target_points (np.ndarray): Pole cílových bodů, pro které chceme naj
-        """
-            
         tree = cKDTree(self.anchor_points)
-        R_LIMIT = 2 * self.min_distance
+        r_limit = 2 * self.min_distance
+        # k_neighbors omezíme počtem dostupných kotevních bodů
+        k = min(10, len(self.anchor_points)) 
+        
+        distances, indices = tree.query(self.point_coords, k=k, distance_upper_bound=r_limit)
 
-        # Vektorizovaný dotaz
-        distances, indices = tree.query(target_points, k=k_neighbors)
+        final_indices = []
+        for i in range(len(self.point_coords)):
+            # cKDTree vrací 'inf' a index == len(data) pro nenalezené sousedy
+            idx = indices[i]
+            valid = idx < len(self.anchor_points)
+            final_indices.append(idx[valid])
+            
+        return final_indices
 
-        # Vektorizovaná maska vzdálenosti
-        valid_neighbor_mask = distances <= R_LIMIT
-
-        final_result_indices = []
-        for i in range(len(target_points)):
-            # Výběr platných indexů pro každý cílový bod
-            current_valid = indices[i][valid_neighbor_mask[i]]
-            final_result_indices.append(current_valid)
-
-        return final_result_indices
-
-     
-    def mix_fields(self, target_points) -> np.ndarray:
+    def mix_fields(self, field_samples: np.ndarray) -> np.ndarray:
         """
-        Finální míchání polí (průměrování).
-        Pro každý cílový bod získáme jeho sousedy pomocí spatial_points.
-        Pokud má sousedů více, provedeme průměr jejich hodnot. Pokud žádného
+        Míchání polí na základě předvypočítaných sousedů.
+        
         Args:
-            target_points (np.ndarray): Pole cílových bodů, pro které chceme získat smíšené hodnoty.
+            field_samples (np.ndarray): Shape (N, K), kde N je počet zdrojů 
+                                        a K je počet bodů (len(point_coords)).
         """
+        num_source, num_points = field_samples.shape
+        if num_points != len(self.point_coords):
+            raise ValueError("Počet bodů v field_samples neodpovídá point_coords.")
+
+        # Generujeme indexy polí pro kotevní body
+        anchor_to_field_map = self.get_fields_indices(num_source)
         
-        neighbor_indices_list = self.spatial_points(target_points)
-        
-        mixed_results = []
-        for neighbors in neighbor_indices_list:
+        mixed_result = np.full(num_points, np.nan)
+        neighbor_indices_list = self.neighbor_data
+
+        for i_point, neighbors in enumerate(neighbor_indices_list):
             if len(neighbors) == 0:
-                mixed_results.append(np.nan)
-            elif len(neighbors) == 1:
-                mixed_results.append(self.fields_indices[neighbors[0]])
-            else:
-                # "Provedeme průměr, pokud jich zbyde více
-                values = self.fields_indices[neighbors]
-                mixed_results.append(np.mean(values))
-                
-        return np.array(mixed_results)
+                continue
+            
+            # Získáme indexy zdrojových polí, které patří k sousedním kotevním bodům
+            source_indices = anchor_to_field_map[neighbors]
+            
+            # Vybereme hodnoty z příslušných polí pro daný bod i_point
+            # field_samples[source_idx, i_point]
+            values = field_samples[source_indices, i_point]
+            
+            mixed_result[i_point] = np.mean(values)
+
+        return mixed_result

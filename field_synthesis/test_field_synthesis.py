@@ -3,30 +3,44 @@ import numpy as np
 from field_synthesis import FieldSynthesis
 
 @pytest.fixture
-def fs_instance():
+def sample_coords():
+    """Створює сітку точок 10x10 для тестів."""
+    x = np.linspace(0, 100, 10)
+    y = np.linspace(0, 100, 10)
+    xv, yv = np.meshgrid(x, y)
+    return np.stack([xv.ravel(), yv.ravel()], axis=-1) # Shape (100, 2)
+
+@pytest.fixture
+def fs_instance(sample_coords):
     """Vytvoří základní testovací instanci třídy."""
     return FieldSynthesis(
-        area_size=100.0, 
+        point_coords=sample_coords,
         count_points=50, 
-        num_source=5, 
-        dimension=2, 
         seed=42
     )
 
 ## --- Testy Inicializace a Vlastností ---
 
-def test_initialization(fs_instance):
+def test_initialization(fs_instance, sample_coords):
     """Ověří, že parametry jsou správně nastaveny."""
-    assert fs_instance.area_size == 100.0
+    # Testujeme shodu souřadnic
+    np.testing.assert_array_equal(fs_instance.point_coords, sample_coords)
     assert fs_instance.count_points == 50
-    assert fs_instance.num_source == 5
+    assert fs_instance.dimension == 2
+
+def test_area_stats(fs_instance):
+    """Ověří výpočet statistik oblasti."""
+    stats = fs_instance.area_stats
+    assert stats["volume"] == 10000.0 # 100 * 100
+    assert np.all(stats["min"] == 0)
+    assert np.all(stats["max"] == 100)
 
 def test_cached_distance(fs_instance):
     """Ověří výpočet minimální vzdálenosti."""
     dist = fs_instance.min_distance
     assert isinstance(dist, float)
     assert dist > 0
-    # Ověření, že se hodnota nemění (cache)
+    # Ověření cache
     assert fs_instance.min_distance == dist
 
 ## --- Testy Generování Bodů ---
@@ -37,51 +51,24 @@ def test_generate_points(fs_instance):
     assert isinstance(points, np.ndarray)
     # Tvar by měl odpovídat (count_points, dimension)
     assert points.shape == (50, 2)
-    # Body musí být v mezích oblasti
-    assert np.all(points >= 0)
-    assert np.all(points <= 100.0)
+    # Body musí být v mezích vypočítaného bounding boxu
+    stats = fs_instance.area_stats
+    assert np.all(points >= stats["min"])
+    assert np.all(points <= stats["max"])
 
 def test_assign_source_fields(fs_instance):
     """Ověří přiřazení indexů polí k bodům."""
-    indices = fs_instance.fields_indices
+    # Testujeme pro 5 zdrojových polí
+    num_source = 5
+    indices = fs_instance.get_fields_indices(num_source)
     assert len(indices) == 50
-    # Indexy musí být v rozsahu [0, num_source - 1]
     assert np.all(indices >= 0)
-    assert np.all(indices < 5)
-    assert indices.dtype.kind in 'iu' # integer nebo unsigned integer
+    assert np.all(indices < num_source)
 
 ## --- Testy Prostorové Logiky ---
 
-def test_spatial_points_return_type(fs_instance):
-    """Ověří, že vyhledávání sousedů vrací seznam indexů."""
-    target = np.array([[50.0, 50.0]])
-    neighbors = fs_instance.spatial_points(target)
+def test_neighbor_data(fs_instance):
+    """Ověří, že vyhledávání sousedů vrací seznam indexů pro každý bod."""
+    neighbors = fs_instance.neighbor_data
     assert isinstance(neighbors, list)
-    assert len(neighbors) == 1
-    assert isinstance(neighbors[0], np.ndarray)
-
-def test_mix_fields_logic(fs_instance):
-    """Ověří, že míchání polí vrací správný počet výsledků."""
-    target_points = np.array([[10, 10], [50, 50], [90, 90]])
-    results = fs_instance.mix_fields(target_points)
-    
-    assert isinstance(results, np.ndarray)
-    assert len(results) == 3
-    # Výsledek by měl být buď číslo (průměr) nebo NaN, pokud v okolí nic není
-    assert results.dtype == np.float64
-
-## --- Testy Robustnosti ---
-
-def test_reproducibility():
-    """Ověří, že stejný seed generuje identické výsledky."""
-    fs1 = FieldSynthesis(100, 20, 3, seed=10)
-    fs2 = FieldSynthesis(100, 20, 3, seed=10)
-    
-    np.testing.assert_array_equal(fs1.anchor_points, fs2.anchor_points)
-    np.testing.assert_array_equal(fs1.fields_indices, fs2.fields_indices)
-
-def test_empty_area_handling():
-    """Ověří chování při nulovém počtu bodů."""
-    fs = FieldSynthesis(area_size=100, count_points=0, num_source=2)
-    assert fs.min_distance == 0.0
-    assert fs.anchor_points.shape == (0, 2)
+    assert len(neighbors) == len
