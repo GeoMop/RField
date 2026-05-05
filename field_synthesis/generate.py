@@ -1,12 +1,11 @@
 import argparse
 import zipfile
 import io
-import os
 import numpy as np
+import xarray as xr
 from field_synthesis import FieldSynthesis
 
 def load_data(zip_path):
-    """Витягує координати та всі сампли з одного ZIP-архіву."""
     coords = None
     all_values = []
     
@@ -32,7 +31,7 @@ def load_data(zip_path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("archive", help="Path to cond_tensors.zip")
-    parser.add_argument("-o", "--output", default="synthesis_results.zip")
+    parser.add_argument("-o", "--output", default="synthesis_results.zarr")
     parser.add_argument("--anchors", type=int, default=100)
     parser.add_argument("--count", type=int, default=200)
     parser.add_argument("--seed", type=int, default=42)
@@ -40,33 +39,54 @@ def main():
 
     coords, samples_raw = load_data(args.archive)
     
-    samples = samples_raw[:, :, 0]
-
-    max_range = np.max(coords)
-    fs = FieldSynthesis(
-        area_size=max_range,
-        count_points=args.anchors,
-        num_source=len(samples),
-        dimension=3,
-        seed=args.seed
-    )
+    samples = samples_raw[:, :, 0] if samples_raw.ndim == 3 else samples_raw
+    max_range = float(np.max(coords))
 
     print(f"Synthesizing {args.count} fields...")
-    
-    with zipfile.ZipFile(args.output, 'w', compression=zipfile.ZIP_DEFLATED) as out_z:
-        for i in range(args.count):
-            res = fs.mix_fields(coords)
-            
-            buffer = io.BytesIO()
-            np.save(buffer, res)
-            
-            filename = f"field_{i:04d}.npy"
-            out_z.writestr(filename, buffer.getvalue())
-            
-            if (i + 1) % 50 == 0:
-                print(f"Progress: {i + 1}/{args.count}")
+    all_synthesized_fields = []
 
-    print(f"Done! Results in {args.output}")
+    for i in range(args.count):
+        fs = FieldSynthesis(
+            area_size=max_range,
+            count_points=args.anchors,
+            num_source=len(samples),
+            dimension=3,
+            seed=args.seed + i
+        )
+        
+        res = fs.mix_fields(coords)
+        all_synthesized_fields.append(res)
+        
+        if (i + 1) % 50 == 0:
+            print(f"Progress: {i + 1}/{args.count}")
+
+    stacked_results = np.vstack(all_synthesized_fields)
+
+    print("Packing data into xarray Dataset...")
+    
+    ds = xr.Dataset(
+        data_vars=dict(
+            mixed_fields=(["field_idx", "point_idx"], stacked_results),
+            coords_x=(["point_idx"], coords[:, 0]),
+            coords_y=(["point_idx"], coords[:, 1]),
+            coords_z=(["point_idx"], coords[:, 2]) if coords.shape[1] > 2 else None
+        ),
+        coords=dict(
+            field_idx=np.arange(args.count),
+            point_idx=np.arange(len(coords))
+        ),
+        attrs=dict(
+            description="Stochasticky generované horninové masivy",
+            area_size=max_range,
+            anchors_per_field=args.anchors,
+            base_seed=args.seed
+        )
+    )
+
+    print(f"Saving to Zarr V3 format: {args.output}")
+    ds.to_zarr(args.output, mode="w", zarr_format=3, consolidated=False)
+    
+    print("Done! All systems nominal.")
 
 if __name__ == "__main__":
     main()
