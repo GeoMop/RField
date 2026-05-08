@@ -1,0 +1,12 @@
+{
+  "attributes": {
+    "description": "Stochasticky generovan\u00e9 horninov\u00e9 masivy",
+    "area_size": 30.0,
+    "anchors_per_field": 50,
+    "mixing_ratio": 0.15,
+    "free_space_ratio": 0.4,
+    "base_seed": 42
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

@@ -6,6 +6,7 @@ import xarray as xr
 from field_synthesis import FieldSynthesis
 
 def load_data(zip_path):
+    """Витягує координати та всі сампли з одного ZIP-архіву."""
     coords = None
     all_values = []
     
@@ -35,14 +36,20 @@ def main():
     parser.add_argument("--anchors", type=int, default=100)
     parser.add_argument("--count", type=int, default=200)
     parser.add_argument("--seed", type=int, default=42)
+    # Нові аргументи для керування вузьким кордоном
+    parser.add_argument("--mixing-ratio", type=float, default=0.15, help="Width of the mixing band (default: 0.15)")
+    parser.add_argument("--free-space", type=float, default=0.4, help="Free space ratio (default: 0.4)")
     args = parser.parse_args()
 
     coords, samples_raw = load_data(args.archive)
     
     samples = samples_raw[:, :, 0] if samples_raw.ndim == 3 else samples_raw
     max_range = float(np.max(coords))
+    
+    # Автоматично визначаємо розмірність (2D або 3D) на основі вхідних координат
+    dim = coords.shape[1]
 
-    print(f"Synthesizing {args.count} fields...")
+    print(f"Synthesizing {args.count} fields (Dimension: {dim}D, Mixing Ratio: {args.mixing_ratio})...")
     all_synthesized_fields = []
 
     for i in range(args.count):
@@ -50,7 +57,9 @@ def main():
             area_size=max_range,
             count_points=args.anchors,
             num_source=len(samples),
-            dimension=3,
+            dimension=dim,
+            free_space_ratio=args.free_space,
+            mixing_ratio=args.mixing_ratio,
             seed=args.seed + i
         )
         
@@ -64,13 +73,18 @@ def main():
 
     print("Packing data into xarray Dataset...")
     
+    # Динамічне формування data_vars, щоб уникнути помилок з None для 2D даних
+    data_vars = {
+        "mixed_fields": (["field_idx", "point_idx"], stacked_results),
+        "coords_x": (["point_idx"], coords[:, 0]),
+        "coords_y": (["point_idx"], coords[:, 1]),
+    }
+    # Додаємо вісь Z тільки якщо дані дійсно 3D
+    if dim > 2:
+        data_vars["coords_z"] = (["point_idx"], coords[:, 2])
+
     ds = xr.Dataset(
-        data_vars=dict(
-            mixed_fields=(["field_idx", "point_idx"], stacked_results),
-            coords_x=(["point_idx"], coords[:, 0]),
-            coords_y=(["point_idx"], coords[:, 1]),
-            coords_z=(["point_idx"], coords[:, 2]) if coords.shape[1] > 2 else None
-        ),
+        data_vars=data_vars,
         coords=dict(
             field_idx=np.arange(args.count),
             point_idx=np.arange(len(coords))
@@ -79,6 +93,8 @@ def main():
             description="Stochasticky generované horninové masivy",
             area_size=max_range,
             anchors_per_field=args.anchors,
+            mixing_ratio=args.mixing_ratio,
+            free_space_ratio=args.free_space,
             base_seed=args.seed
         )
     )
