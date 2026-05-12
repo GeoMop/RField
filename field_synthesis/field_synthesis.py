@@ -70,7 +70,7 @@ class FieldSynthesis:
         
         return self.rng.integers(0, self.num_source, size=len(self.anchor_points))
 
-    def spatial_points(self, target_points, k_neighbors=5) -> list:
+    def spatial_points(self, target_points) -> list:
         """
         Vyhledání sousedů s logikou "úzkého míchacího pruhu".
         Ponechá jen ty sousedy, jejichž vzdálenost se liší max o R_mix od nejbližšího.
@@ -79,6 +79,8 @@ class FieldSynthesis:
             return [[] for _ in target_points]
             
         tree = cKDTree(self.anchor_points)
+        
+        k_neighbors = self.dimension + 2 
         actual_k = min(k_neighbors, len(self.anchor_points))
 
         distances, indices = tree.query(target_points, k=actual_k)
@@ -89,15 +91,11 @@ class FieldSynthesis:
 
         # Šířka úzkého míchacího pruhu (např. 0.15 * D)
         R_mix = self.mixing_ratio * self.min_distance
-        
-        # Maximální dosah pro hledání (pojistka proti prázdným oblastem)
-        # R_max = 2 * self.min_distance
 
         # Vzdálenost k nejbližšímu sousedovi (první sloupec)
         d1 = distances[:, 0:1]
 
         # Maska: Ponecháme souseda, pokud je uvnitř pruhu (d_i - d1 <= R_mix) 
-        # a zároveň neleží dál než R_max (2*D)
         valid_mask = (distances - d1 <= R_mix)
 
         final_result_indices = []
