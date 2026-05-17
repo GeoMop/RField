@@ -1,17 +1,17 @@
 import marimo
 
-__generated_with = "0.19.11"
+__generated_with = "0.20.2"
 app = marimo.App(width="medium")
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
     import marimo as mo
 
     return (mo,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md("""
     ### Struktura vstupu náhodných polí (xarray)
@@ -22,86 +22,99 @@ def _(mo):
     - `i_point`: Index konkrétního bodu v nepravidelné síti.
     - `i_sample`: Index vzorku (realizace) náhodného pole.
     - `i_dim`: Označení prostorové osy (např. 'x', 'y').
-
-    **Datové proměnné (data_vars):**
-    - `X`: Matice prostorových souřadnic bodů. Má tvar `[i_dim, i_point]`.
-    - `QA`: První vygenerované náhodné pole. Má tvar `[i_point, i_sample]`.
-    - `QB`: Druhé vygenerované náhodné pole. Má tvar `[i_point, i_sample]`.
     """)
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
     import xarray as xr
     import numpy as np
-    import matplotlib.pyplot as plt
+    import analyza
 
-    n_points = 300
-    n_samples = 100
+    n_points = 1000
+    n_samples_A = 10
+    n_samples_B = 20
     n_dim = 2
 
     X_data = np.random.rand(n_dim, n_points)
-    QA_data = np.random.rand(n_points, n_samples)
-    QB_data = np.random.normal(loc=0.5, scale=0.15, size=(n_points, n_samples))
+
+    # Testovací pole = 10**( np.random.normal(N, loc = -10, scale=3))
+    QA_data = 10**(np.random.normal(loc=-10, scale=3, size=(n_points, n_samples_A)))
+
+    # případně zvětšit scale pro větší rozdíl průměrů polí
+    QB_data = 10**(np.random.normal(loc=-10, scale=5, size=(n_points, n_samples_B)))
 
     ds = xr.Dataset(
         data_vars={
             "X": (("i_dim", "i_point"), X_data),
-            "QA": (("i_point", "i_sample"), QA_data),
-            "QB": (("i_point", "i_sample"), QB_data),
+            "QA": (("i_point", "i_sample_A"), QA_data),
+            "QB": (("i_point", "i_sample_B"), QB_data),
         },
         coords={
             "i_point": np.arange(n_points),
-            "i_sample": np.arange(n_samples),
+            "i_sample_A": np.arange(n_samples_A),
+            "i_sample_B": np.arange(n_samples_B),
             "i_dim": ["x", "y"]
         }
     )
+    return analyza, ds
 
-    # Přidání atributů s pojmenováním porovnávaných veličin
-    ds["QA"].attrs["long_name"] = "Porovnávaná veličina A (např. propustnost)"
-    ds["QA"].attrs["units"] = "-"
-    ds["QB"].attrs["long_name"] = "Porovnávaná veličina B (např. hustota puklin)"
-    ds["QB"].attrs["units"] = "-"
-    ds.attrs["description"] = "Testovací data náhodných polí ze samplů na nepravidelné síti"
 
-    stats = xr.Dataset({
-        "mean_QA": ds["QA"].mean(dim="i_sample"),
-        "var_QA":  ds["QA"].var(dim="i_sample"),
-        "mean_QB": ds["QB"].mean(dim="i_sample"),
-        "var_QB":  ds["QB"].var(dim="i_sample")
-    })
+@app.cell(hide_code=True)
+def _(ds):
+    # Průměry pro každé ze dvou polí. Průměry do samostatné buňky.
+    mean_QA = ds["QA"].mean(dim="i_sample_A")
+    mean_QB = ds["QB"].mean(dim="i_sample_B")
+    return mean_QA, mean_QB
 
-    x_coords = ds["X"].sel(i_dim="x")
-    y_coords = ds["X"].sel(i_dim="y")
 
-    fig, axes = plt.subplots(2, 3, figsize=(15, 9))
-    fig.suptitle("Porovnání polí QA a QB na neregulární síti", fontsize=16)
+@app.cell(hide_code=True)
+def _(analyza, ds, mean_QA, mean_QB):
+    grid_mean_A, x_edges, y_edges = analyza.bin_single_field(ds["X"], mean_QA)
+    grid_mean_B, _, _ = analyza.bin_single_field(ds["X"], mean_QB)
 
-    sc1 = axes[0, 0].scatter(x_coords, y_coords, c=stats["mean_QA"], cmap='viridis', s=20)
-    axes[0, 0].set_title("QA: Mapa průměru")
-    plt.colorbar(sc1, ax=axes[0, 0])
+    fig_means = analyza.plot_means_two_columns(x_edges, y_edges, grid_mean_A, grid_mean_B)
+    fig_means
+    return x_edges, y_edges
 
-    sc2 = axes[0, 1].scatter(x_coords, y_coords, c=stats["var_QA"], cmap='magma', s=20)
-    axes[0, 1].set_title("QA: Mapa rozptylu")
-    plt.colorbar(sc2, ax=axes[0, 1])
 
-    axes[0, 2].hist(ds["QA"].values.flatten(), bins=30, color='skyblue', edgecolor='black')
-    axes[0, 2].set_title("QA: Histogram všech hodnot")
+@app.cell(hide_code=True)
+def _(analyza, ds):
+    grid_A, _, _ = analyza.bin_all_samples(ds["X"], ds["QA"])
+    grid_B, _, _ = analyza.bin_all_samples(ds["X"], ds["QB"])
 
-    sc3 = axes[1, 0].scatter(x_coords, y_coords, c=stats["mean_QB"], cmap='viridis', s=20)
-    axes[1, 0].set_title("QB: Mapa průměru")
-    plt.colorbar(sc3, ax=axes[1, 0])
+    t_stat, p_value = analyza.perform_ttest(grid_A, grid_B)
+    return p_value, t_stat
 
-    sc4 = axes[1, 1].scatter(x_coords, y_coords, c=stats["var_QB"], cmap='magma', s=20)
-    axes[1, 1].set_title("QB: Mapa rozptylu")
-    plt.colorbar(sc4, ax=axes[1, 1])
 
-    axes[1, 2].hist(ds["QB"].values.flatten(), bins=30, color='salmon', edgecolor='black')
-    axes[1, 2].set_title("QB: Histogram všech hodnot")
+@app.cell(hide_code=True)
+def _(analyza, p_value, t_stat, x_edges, y_edges):
+    fig_test = analyza.plot_ttest_results(x_edges, y_edges, t_stat, p_value)
+    fig_test
+    return
 
-    plt.tight_layout()
-    plt.show()
+
+@app.cell(hide_code=True)
+def _(analyza, ds):
+    x_vals = ds["X"].sel(i_dim="x").values
+    y_vals = ds["X"].sel(i_dim="y").values
+    q_a_vals = ds["QA"].values
+    q_b_vals = ds["QB"].values
+
+    fig_multiscale_maps, fig_multiscale_line = analyza.multiscale_analysis(x_vals, y_vals, q_a_vals, q_b_vals)
+    return fig_multiscale_line, fig_multiscale_maps
+
+
+@app.cell(hide_code=True)
+def _(fig_multiscale_maps):
+    fig_multiscale_maps
+    return
+
+
+@app.cell(hide_code=True)
+def _(fig_multiscale_line):
+    fig_multiscale_line
     return
 
 
